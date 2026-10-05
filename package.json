@@ -1,0 +1,18 @@
+{
+  "name": "chaoscord-agent",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "A chaotic Discord AI agent with persistent memory, ambient participation, tool calling, and provider fallback.",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.6.1"
+  }
+}
