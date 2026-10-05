@@ -1,12 +1,24 @@
 import { buildTools, executeTool } from "./tools.js";
+import { routeRequest } from "./router.js";
 
 function retryable(status) {
   return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
-async function callProvider(provider, body) {
+function estimateCost(usage, pricing) {
+  if (!usage || !pricing) return 0;
+  const input = usage.prompt_tokens || usage.input_tokens || 0;
+  const output = usage.completion_tokens || usage.output_tokens || 0;
+  return (
+    (input / 1_000_000) * (pricing.inputPer1M || 0) +
+    (output / 1_000_000) * (pricing.outputPer1M || 0)
+  );
+}
+
+async function callProvider(provider, body, { model, label, route }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45000);
+  const started = Date.now();
 
   try {
     const res = await fetch(`${provider.baseUrl}/chat/completions`, {
@@ -15,7 +27,7 @@ async function callProvider(provider, body) {
         authorization: `Bearer ${provider.apiKey}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({ model: provider.model, ...body }),
+      body: JSON.stringify({ model: model || provider.model, ...body }),
       signal: controller.signal
     });
 
@@ -26,19 +38,52 @@ async function callProvider(provider, body) {
       throw err;
     }
 
-    return JSON.parse(raw);
+    const data = JSON.parse(raw);
+    data.__chaosMeta = {
+      provider: label,
+      model: data.model || model || provider.model,
+      route,
+      latencyMs: Date.now() - started,
+      usage: data.usage || null,
+      estimatedCostUsd: estimateCost(data.usage, provider.pricing)
+    };
+    return data;
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function callWithFallback(primary, fallback, body) {
+async function callWithFallback(primary, fallback, body, route) {
   try {
-    return await callProvider(primary, body);
+    return await callProvider(primary, body, {
+      model: route.model,
+      label: "primary",
+      route: route.tier
+    });
   } catch (err) {
     if (!fallback || (err.status && !retryable(err.status))) throw err;
-    return callProvider(fallback, body);
+    return callProvider(fallback, body, {
+      model: fallback.model,
+      label: "fallback",
+      route: route.tier
+    });
   }
+}
+
+function recordUsage(store, ctx, meta) {
+  if (!store || !meta) return;
+  const usage = meta.usage || {};
+  store.recordUsage({
+    guildId: ctx.guild?.id || "dm",
+    userId: ctx.userId,
+    provider: meta.provider,
+    model: meta.model,
+    route: meta.route,
+    inputTokens: usage.prompt_tokens || usage.input_tokens || 0,
+    outputTokens: usage.completion_tokens || usage.output_tokens || 0,
+    latencyMs: meta.latencyMs || 0,
+    estimatedCostUsd: meta.estimatedCostUsd || 0
+  });
 }
 
 export class Agent {
@@ -49,33 +94,48 @@ export class Agent {
   }
 
   async respond({ messages, system, toolContext }) {
-    const tools = buildTools({ tavilyEnabled: Boolean(this.tavilyApiKey) });
+    const route = routeRequest({
+      messages,
+      models: this.primary.models,
+      hasWeb: Boolean(this.tavilyApiKey)
+    });
+
+    const tools = buildTools({
+      tavilyEnabled: Boolean(this.tavilyApiKey),
+      actionScope: toolContext.actionScope || {}
+    });
+
     const working = [{ role: "system", content: system }, ...messages];
 
-    for (let step = 0; step < 4; step++) {
-      const data = await callWithFallback(this.primary, this.fallback, {
-        messages: working,
-        tools,
-        tool_choice: "auto",
-        temperature: 0.8
-      });
+    for (let step = 0; step < 5; step++) {
+      const data = await callWithFallback(
+        this.primary,
+        this.fallback,
+        {
+          messages: working,
+          tools,
+          tool_choice: "auto",
+          temperature: route.temperature
+        },
+        route
+      );
+
+      recordUsage(toolContext.store, toolContext, data.__chaosMeta);
 
       const msg = data.choices?.[0]?.message;
       if (!msg) throw new Error("AI provider returned no message.");
 
-      const toolCalls = msg.tool_calls || [];
-      if (!toolCalls.length) return (msg.content || "").trim() || "…";
+      const calls = msg.tool_calls || [];
+      if (!calls.length) return (msg.content || "").trim() || "…";
 
       working.push(msg);
 
-      for (const call of toolCalls) {
+      for (const call of calls) {
         const name = call.function?.name;
         let args = {};
         try {
           args = JSON.parse(call.function?.arguments || "{}");
-        } catch {
-          args = {};
-        }
+        } catch {}
 
         let result;
         try {
@@ -95,6 +155,6 @@ export class Agent {
       }
     }
 
-    return "Tool loop hit its step limit. Try the request again with a narrower target.";
+    return "Tool loop hit its step limit. Narrow the request and try again.";
   }
 }
