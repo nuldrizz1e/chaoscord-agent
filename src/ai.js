@@ -102,7 +102,7 @@ export class Agent {
 
     const tools = buildTools({
       tavilyEnabled: Boolean(this.tavilyApiKey),
-      actionScope: toolContext.actionScope || {}
+      scope: toolContext.scope || {}
     });
 
     const working = [{ role: "system", content: system }, ...messages];
@@ -155,6 +155,6 @@ export class Agent {
       }
     }
 
-    return "Tool loop hit its step limit. Narrow the request and try again.";
+    return "I hit the internal tool-step limit. Try narrowing the request.";
   }
 }
