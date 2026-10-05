@@ -1,103 +1,45 @@
-# chaoscord-agent
+# Chaoscord Agent
 
-A Discord AI agent that is meant to feel like it actually lives in the server instead of waiting behind a boring `/ask` command.
+A Discord AI agent that behaves like a server-native agent instead of a chatbot trapped behind `/ask`.
 
-## Current architecture
+## This build
 
-- Discord.js v14
-- OpenAI-compatible model provider
-- optional fallback model/provider
-- persistent JSON memory
-- recent-channel context
+### Social brain
+- replies to DMs, mentions, and reply chains
 - ambient participation scoring
-- reply/mention/DM awareness
-- personality modes
-- attention modes
-- slash commands
-- OpenAI-style tool calling
-- Discord-native read tools
-- optional Tavily web search
-- anti-spam cooldowns
+- anti-spam cooldown
+- lightweight reactions
+- vibes: `normal`, `chaos`, `chill`, `engineer`, `menace`
+- attention: `quiet`, `smart`, `active`
 
-## Commands
+### Per-server brain
+Each server gets its own persistent instructions:
 
-- `/ask` — direct prompt
-- `/vibe normal|chaos|chill|engineer|menace`
-- `/attention quiet|smart|active`
-- `/remember`
-- `/memory`
-- `/forgetme`
-- `/summarize`
-- `/status`
-
-## Built-in agent tools
-
-When the selected model supports OpenAI-compatible tool calling, Chaoscord can call:
-
-- `get_server_info`
-- `get_channel_info`
-- `get_member_info`
-- `get_recent_messages`
-- `remember_user_note`
-- `search_web` when Tavily is configured
-
-The tool loop is capped to prevent runaway calls.
-
-## Setup
-
-Clone:
-
-```bash
-git clone https://github.com/nuldrizz1e/chaoscord-agent.git
-cd chaoscord-agent
-npm install
-cp .env.example .env
-nano .env
+```text
+/brain show
+/brain set
+/brain reset
 ```
 
-Required:
+Only members with **Manage Server** can modify it.
+
+### Task-aware model router
+Routes requests to:
+
+- **fast** — normal chat
+- **smart** — code, debugging, architecture, analysis
+- **research** — current info, verification, web research
 
 ```env
-DISCORD_TOKEN=
-DISCORD_CLIENT_ID=
-AI_API_KEY=
-AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4.1-mini
+AI_FAST_MODEL=
+AI_SMART_MODEL=
+AI_RESEARCH_MODEL=
 ```
 
-Recommended while developing:
+Blank route models reuse `AI_MODEL`.
 
-```env
-DISCORD_GUILD_ID=your_test_server_id
-```
-
-Guild slash commands update almost immediately. If `DISCORD_GUILD_ID` is omitted, commands are registered globally and may take longer to propagate.
-
-Then:
-
-```bash
-npm start
-```
-
-## Discord bot permissions / intents
-
-In the Discord Developer Portal, enable the intents this project uses:
-
-- Server Members Intent
-- Message Content Intent
-
-Invite the bot with permissions to:
-
-- View Channels
-- Send Messages
-- Read Message History
-- Add Reactions
-- Use Application Commands
-
-Do not give it Administrator unless you later add a feature that truly requires it.
-
-## Provider fallback
-
+### Provider fallback
 Optional:
 
 ```env
@@ -106,58 +48,170 @@ AI_FALLBACK_BASE_URL=
 AI_FALLBACK_MODEL=
 ```
 
-Fallback activates for timeouts, 429s, and server-side provider failures.
+Used on timeouts, 429s, and provider-side failures.
 
-## Web search
+### Web research
+With `TAVILY_API_KEY` configured the agent receives:
 
-Optional:
+- `search_web`
+- `research_web` — multiple focused searches merged into one evidence set
+
+### Discord tools
+Read tools:
+- server info
+- channel info
+- member lookup
+- recent messages
+
+Guarded actions:
+- react to the triggering message
+- create a thread from the triggering message
+
+Action tools are only exposed when the user's message explicitly authorizes that action.
+
+There are no ban/kick/delete/role mutation tools in this build.
+
+### Persistent reminders
+```text
+/remind in:10m text:check the deploy
+/tasks
+/cancel-task
+```
+
+Tasks survive restarts in `data/state.json`.
+
+### Usage telemetry
+```text
+/usage
+```
+
+Tracks:
+- model/provider calls
+- input/output tokens
+- average latency
+- route/model counts
+- optional estimated USD cost
+
+Set actual provider pricing if wanted:
 
 ```env
-TAVILY_API_KEY=
+AI_INPUT_USD_PER_1M=0
+AI_OUTPUT_USD_PER_1M=0
+AI_FALLBACK_INPUT_USD_PER_1M=0
+AI_FALLBACK_OUTPUT_USD_PER_1M=0
 ```
 
-If absent, the web-search tool simply is not exposed to the model.
-
-## State
-
-Runtime memory is stored in:
+## Commands
 
 ```text
-data/state.json
+/ask
+/vibe
+/attention
+/brain show|set|reset
+/remember
+/memory
+/forgetme
+/summarize
+/remind
+/tasks
+/cancel-task
+/usage
+/status
 ```
 
-It is gitignored. Explicit long-term user notes survive restarts.
+## Install / update
 
-## Ambient participation
+Fresh:
 
-The agent scores ordinary channel messages and only jumps in when the score is strong enough.
+```bash
+git clone https://github.com/nuldrizz1e/chaoscord-agent.git
+cd chaoscord-agent
+npm install
+cp .env.example .env
+nano .env
+npm start
+```
 
-- `quiet` — never enters uninvited
-- `smart` — conservative
-- `active` — more willing to join
+Existing clone:
 
-Ambient replies also have a cooldown so one active server does not turn the bot into spam.
+```bash
+cd ~/chaoscord-agent
+git pull
+npm install
+npm start
+```
 
-## Security notes
+## Required environment
 
-- never commit `.env`
-- keep the Discord token private
-- keep provider API keys private
-- tools in this version are intentionally read-heavy
-- no moderation or destructive Discord actions are included yet
+```env
+DISCORD_TOKEN=
+DISCORD_CLIENT_ID=
+DISCORD_GUILD_ID=
 
-## Next architecture
+AI_API_KEY=
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4.1-mini
+```
 
-Planned next layers:
+Use `DISCORD_GUILD_ID` during development so slash command changes appear quickly.
 
-1. per-guild configuration
-2. vector or SQLite memory instead of flat JSON
-3. model router by task/cost/latency
-4. permission-gated Discord actions
-5. scheduled tasks and reminders
-6. richer web research pipeline
-7. server knowledge/indexing
-8. observability and token/cost tracking
-9. plugin registry
-10. autonomous-but-bounded workflows
+## Discord intents / permissions
 
+Enable:
+- Server Members Intent
+- Message Content Intent
+
+Permissions:
+- View Channels
+- Send Messages
+- Read Message History
+- Add Reactions
+- Create Public Threads
+- Send Messages in Threads
+- Use Application Commands
+
+Do **not** give Administrator unless a future feature truly requires it.
+
+## Persistence
+
+`data/state.json` contains:
+- user memories
+- per-server brain/settings
+- recent channel state
+- reminders
+- usage counters
+
+It is gitignored.
+
+## Architecture
+
+```text
+Discord
+  ↓
+social attention layer
+  ↓
+server brain + user memory + recent context
+  ↓
+task-aware model router
+  ↓
+primary provider ──fallback──> secondary provider
+  ↓
+bounded tool loop
+  ├─ Discord read tools
+  ├─ guarded Discord actions
+  └─ web search / multi-query research
+  ↓
+reply + telemetry + persistent state
+```
+
+## Next layers
+
+- SQLite state
+- semantic/vector memory
+- URL reader/browser tool
+- model routing by measured cost + latency
+- recurring tasks
+- server knowledge indexing
+- structured traces/dashboard
+- plugin registry
+- sandboxed code execution
