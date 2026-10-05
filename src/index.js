@@ -12,6 +12,7 @@ import { Store } from "./store.js";
 import { Agent } from "./ai.js";
 import { systemPrompt } from "./prompts.js";
 import { ambientScore, maybeReaction, shouldAmbientReply } from "./social.js";
+import { inferVoice } from "./style.js";
 
 const store = new Store({
   maxHistory: config.maxHistory,
@@ -69,11 +70,12 @@ function explicitScope(message) {
   };
 }
 
-function buildSystem(message) {
+function buildSystem(message, history) {
   return systemPrompt({
     memories: store.memories(message.author.id),
     context: contextFor(message),
-    guildBrain: store.getGuildBrain(message.guild?.id || null)
+    guildBrain: store.getGuildBrain(message.guild?.id || null),
+    voice: inferVoice(message, history)
   });
 }
 
@@ -107,9 +109,10 @@ async function runDueTasks() {
 
 async function askAgent(message) {
   const scope = explicitScope(message);
+  const history = store.getHistory(message.channel.id);
   return agent.respond({
-    system: buildSystem(message),
-    messages: normalizeHistory(store.getHistory(message.channel.id)),
+    system: buildSystem(message, history),
+    messages: normalizeHistory(history),
     toolContext: {
       guild: message.guild,
       channel: message.channel,
